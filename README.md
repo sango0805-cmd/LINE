@@ -87,6 +87,24 @@ npm run typecheck
 npm run dev
 ```
 
+### 動作確認
+
+外部サービス無しで確認できる範囲:
+
+```bash
+npm run typecheck   # 型チェック
+npm run verify      # 純粋ロジックの検証（空き時間計算・署名検証）
+npm run dev         # ローカル起動 → 下記を確認
+```
+
+ローカル起動中の確認例（`.dev.vars` にダミー値が必要）:
+- `GET /` → `line-ai-scheduler: ok`
+- `POST /webhook/zzz` → 404（未知アカウント）
+- `POST /webhook/a`（署名なし/不正）→ 401、正しい `x-line-signature` 付き → 200
+- Cron掃除の手動実行: `curl http://127.0.0.1:8787/cdn-cgi/handler/scheduled`
+
+LINE/Claude/Google を通した実通信テストは **[SETUP.md](./SETUP.md)** を参照。
+
 ### 必要な外部設定
 
 - **LINE**: 秘書Bot用に公式アカウント（Messaging APIチャネル）を作成。
