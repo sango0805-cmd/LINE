@@ -39,9 +39,12 @@ export async function takePending(
   env: Env,
   token: string,
 ): Promise<PendingRecord | null> {
+  // 取得と削除を1文(DELETE ... RETURNING)で原子的に行う。
+  // 「承認」ボタンの二重タップでも、行を実際に削除できた1リクエストだけが
+  // レコードを受け取り、二重登録を防ぐ。
   const row = await env.DB.prepare(
-    `SELECT token, account_id, account_label, user_id, payload
-       FROM pending_appointments WHERE token = ?`,
+    `DELETE FROM pending_appointments WHERE token = ?
+     RETURNING token, account_id, account_label, user_id, payload`,
   )
     .bind(token)
     .first<{
@@ -53,11 +56,6 @@ export async function takePending(
     }>();
 
   if (!row) return null;
-
-  // 一度承認したら消す（二重登録防止）
-  await env.DB.prepare(`DELETE FROM pending_appointments WHERE token = ?`)
-    .bind(token)
-    .run();
 
   return {
     token: row.token,

@@ -10,6 +10,8 @@ import type { WebhookRequestBody, WebhookEvent } from "./line/types.js";
 import { runScheduler } from "./ai/agent.js";
 import type { InputBlock } from "./ai/agent.js";
 import { savePending, takePending } from "./store/pending.js";
+import { loadRecentTurns, appendTurn } from "./store/conversation.js";
+import { cleanup } from "./store/cleanup.js";
 import { insertEvent } from "./calendar/google.js";
 
 const app = new Hono<AppBindings>();
@@ -57,7 +59,14 @@ async function handleEvent(
 ): Promise<void> {
   try {
     if (event.type === "message") {
-      await handleMessage(env, client, account, event.replyToken, event.message);
+      await handleMessage(
+        env,
+        client,
+        account,
+        event.replyToken,
+        event.message,
+        event.source?.userId,
+      );
     } else if (event.type === "postback") {
       await handlePostback(env, client, account, event.replyToken, event.postback.data);
     }
@@ -73,11 +82,15 @@ async function handleMessage(
   account: LineAccount,
   replyToken: string,
   message: { type: string; text?: string; id: string },
+  userId: string | undefined,
 ): Promise<void> {
   const input: InputBlock[] = [];
+  // 会話履歴に残す、このユーザー発話のテキスト表現
+  let userTurnText = "";
 
   if (message.type === "text" && message.text) {
     input.push({ kind: "text", text: message.text });
+    userTurnText = message.text;
   } else if (message.type === "image") {
     const img = await getImageBase64(account, message.id);
     if (!img) {
@@ -90,15 +103,24 @@ async function handleMessage(
       kind: "text",
       text: "この画像（LINEのトーク等のスクリーンショット）から予定を読み取って登録してください。",
     });
+    userTurnText = "[画像(スクショ)を送信]";
   } else {
     // テキスト・画像以外（スタンプ等）は無視
     return;
   }
 
-  const result = await runScheduler(env, account.label, input);
+  // 文脈保持: 1:1チャットで userId が取れる場合だけ履歴を使う
+  const history = userId ? await loadRecentTurns(env, account.id, userId) : [];
+
+  const result = await runScheduler(env, account.label, input, history);
 
   if (result.type === "message") {
+    // 先にユーザーへ返信（replyTokenの鮮度を優先・履歴保存に依存させない）
     await client.replyText(replyToken, result.text);
+    if (userId) {
+      await appendTurn(env, account.id, userId, "user", userTurnText);
+      await appendTurn(env, account.id, userId, "assistant", result.text);
+    }
     return;
   }
 
@@ -108,7 +130,7 @@ async function handleMessage(
     token,
     accountId: account.id,
     accountLabel: account.label,
-    userId: null,
+    userId: userId ?? null,
     appointment: result.appointment,
   });
 
@@ -119,6 +141,19 @@ async function handleMessage(
     env.APP_TIMEZONE,
   );
   await client.replyMessages(replyToken, flex);
+
+  // 返信後に履歴を記録（ベストエフォート）
+  if (userId) {
+    const a = result.appointment;
+    await appendTurn(env, account.id, userId, "user", userTurnText);
+    await appendTurn(
+      env,
+      account.id,
+      userId,
+      "assistant",
+      `（予定候補を提示）${a.title} / ${a.start_time}〜${a.end_time}`,
+    );
+  }
 }
 
 // ── 承認(postback) → カレンダー登録 ────────────────────────────────
@@ -164,4 +199,19 @@ async function handlePostback(
   }
 }
 
-export default app;
+// Cron Triggers から呼ばれる定期掃除（wrangler.jsonc の triggers.crons）
+async function scheduled(
+  _event: ScheduledController,
+  env: Env,
+  _ctx: ExecutionContext,
+): Promise<void> {
+  const result = await cleanup(env);
+  console.log(
+    `[cleanup] pending=${result.pending} conversation=${result.conversation}`,
+  );
+}
+
+export default {
+  fetch: app.fetch,
+  scheduled,
+} satisfies ExportedHandler<Env>;

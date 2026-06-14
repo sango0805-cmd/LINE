@@ -8,6 +8,11 @@
     "enabled": true
   },
 
+  // ── 定期掃除（古いpending/会話履歴の削除）─────────────────────────
+  "triggers": {
+    "crons": ["0 * * * *"] // 毎時0分
+  },
+
   // ── D1: 会話履歴のコンテキスト保持用（ステップ4で利用） ───────────────
   // 作成: `wrangler d1 create line-ai-scheduler`
   // 出てきた database_id を下に貼る。

@@ -126,6 +126,7 @@ export async function runScheduler(
   env: Env,
   accountLabel: string,
   input: InputBlock[],
+  history: { role: "user" | "assistant"; text: string }[] = [],
 ): Promise<AgentResult> {
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
@@ -142,7 +143,16 @@ export async function runScheduler(
         },
   );
 
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content }];
+  // Claude の messages は user 始まりでないと 400 になる。
+  // 並列処理や履歴保存の部分失敗で先頭が assistant になり得るので、
+  // 先頭の非 user ターンを落としてから連結する。
+  const trimmed = [...history];
+  while (trimmed.length > 0 && trimmed[0].role !== "user") trimmed.shift();
+
+  const messages: Anthropic.MessageParam[] = [
+    ...trimmed.map((t) => ({ role: t.role, content: t.text })),
+    { role: "user", content },
+  ];
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const res = await client.messages.create({
@@ -218,6 +228,10 @@ export async function runScheduler(
         });
       }
     }
+
+    // 既知ツールが1つも呼ばれなかった場合（想定外）。
+    // 空の content を送ると API エラーになるのでループを抜ける。
+    if (toolResults.length === 0) break;
 
     messages.push({ role: "user", content: toolResults });
   }
