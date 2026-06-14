@@ -1,7 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Env } from "../env.js";
 import type { Appointment } from "./appointment.js";
-import { checkBusy } from "../calendar/google.js";
+import { checkBusy, findFreeSlots } from "../calendar/google.js";
+import { formatFreeSlots } from "../calendar/freeslots.js";
+import type { FreeSlotOptions } from "../calendar/freeslots.js";
+
+function workHours(env: Env): FreeSlotOptions {
+  return {
+    workStartHour: Number(env.WORK_START_HOUR) || 9,
+    workEndHour: Number(env.WORK_END_HOUR) || 21,
+    minMinutes: 30,
+  };
+}
 
 /**
  * Claude によるスケジュール調整エージェント（Tool Use）。
@@ -46,6 +56,25 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "find_free_slots",
+    description:
+      "指定期間の空き時間（稼働時間帯の中の予定が入っていない時間帯）を調べる。『明日空いてる時間は？』『今週いつ空いてる？』のように空き時間を聞かれたときに使う。",
+    input_schema: {
+      type: "object",
+      properties: {
+        start_time: {
+          type: "string",
+          description: "調べる期間の開始。ISO 8601(+09:00)。例: 明日なら明日の00:00",
+        },
+        end_time: {
+          type: "string",
+          description: "調べる期間の終了。ISO 8601(+09:00)。例: 明日なら翌日の00:00",
+        },
+      },
+      required: ["start_time", "end_time"],
+    },
+  },
+  {
     name: "propose_appointment",
     description:
       "日時の空きが確認でき、登録すべき予定が確定したら呼ぶ。これを呼ぶとユーザーへ最終確認（Flex Message）が送られる。まだ登録はされない。",
@@ -83,7 +112,13 @@ function systemPrompt(env: Env, accountLabel: string): string {
     "- 予定を確定する前に必ず check_availability で空きを確認する。",
     "- 既に予定が入っていれば、その旨を踏まえて近い別の時間帯を提案し、再度空きを確認する。",
     "- 日時が確定できたら propose_appointment を呼ぶ。タイトルは用件が分かる簡潔なものにする。",
-    "- 日時が読み取れない、または予定に関する内容でない場合は、ツールを使わず日本語で簡潔に聞き返す。",
+    "",
+    "空き時間を聞かれたとき（例:「明日空いてる時間は？」「今週いつ空いてる？」）:",
+    "- find_free_slots で該当期間の空きを調べ、結果をそのまま分かりやすく提示する。",
+    "- 期間が曖昧な場合は『明日』なら明日0:00〜翌0:00、『今週』なら今日〜今週末、のように常識的に補う。",
+    `- 稼働時間帯は ${env.WORK_START_HOUR}:00〜${env.WORK_END_HOUR}:00 を前提とする（ツールが自動で絞り込む）。`,
+    "",
+    "- 日時が読み取れない、または予定にも空き確認にも関係ない内容の場合は、ツールを使わず日本語で簡潔に聞き返す。",
   ].join("\n");
 }
 
@@ -137,6 +172,26 @@ export async function runScheduler(
       if (block.name === "propose_appointment") {
         // 終端: 確定候補が出たのでループを抜ける
         return { type: "propose", appointment: block.input as Appointment };
+      }
+
+      if (block.name === "find_free_slots") {
+        const { start_time, end_time } = block.input as {
+          start_time: string;
+          end_time: string;
+        };
+        let resultText: string;
+        try {
+          const slots = await findFreeSlots(env, start_time, end_time, workHours(env));
+          resultText = formatFreeSlots(slots, env.APP_TIMEZONE);
+        } catch (e) {
+          resultText = `空き時間の取得に失敗しました: ${String(e)}`;
+        }
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: resultText,
+        });
+        continue;
       }
 
       if (block.name === "check_availability") {

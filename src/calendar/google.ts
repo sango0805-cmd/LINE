@@ -1,4 +1,6 @@
 import type { Env } from "../env.js";
+import { computeFreeSlots } from "./freeslots.js";
+import type { FreeSlot, FreeSlotOptions } from "./freeslots.js";
 
 /**
  * Google Calendar API クライアント（サービスアカウント認証）。
@@ -149,6 +151,20 @@ export async function checkBusy(
     calendars: Record<string, { busy: BusyInterval[] }>;
   };
   return data.calendars[env.GOOGLE_CALENDAR_ID]?.busy ?? [];
+}
+
+/**
+ * 指定区間の空き時間を返す（稼働時間帯に絞った隙間）。
+ * 「明日空いてる時間は？」のような問い合わせに使う。
+ */
+export async function findFreeSlots(
+  env: Env,
+  startISO: string,
+  endISO: string,
+  opts: FreeSlotOptions,
+): Promise<FreeSlot[]> {
+  const busy = await checkBusy(env, startISO, endISO);
+  return computeFreeSlots(busy, startISO, endISO, opts);
 }
 
 export interface CalendarEventInput {

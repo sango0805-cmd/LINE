@@ -24,6 +24,9 @@
   // `wrangler secret put` で登録する（下記 .dev.vars.example 参照）。
   "vars": {
     "APP_TIMEZONE": "Asia/Tokyo",
-    "ANTHROPIC_MODEL": "claude-opus-4-8"
+    "ANTHROPIC_MODEL": "claude-opus-4-8",
+    // 空き時間を提示する際の稼働時間帯（この範囲内の隙間だけを「空き」とする）
+    "WORK_START_HOUR": "9",
+    "WORK_END_HOUR": "21"
   }
 }

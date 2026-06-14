@@ -11,6 +11,9 @@ export interface Env {
   // 非機密 vars
   APP_TIMEZONE: string;
   ANTHROPIC_MODEL: string;
+  // 空き時間提示で使う稼働時間帯（"9" / "21" など文字列）
+  WORK_START_HOUR: string;
+  WORK_END_HOUR: string;
 
   // LINE 公式アカウント A
   LINE_A_CHANNEL_SECRET: string;
