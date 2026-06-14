@@ -1,13 +1,44 @@
 # LINE AI スケジュール調整アシスタント
 
-2つのLINE公式アカウントからのメッセージを **1つのバックエンド** で受け取り、
-Anthropic API（Claude）の Tool Use でユーザーとスケジュールを調整し、
-**Googleカレンダーへ自動登録** するシステム。
+個人LINEアカウント2つ分の予定を **秘書Bot（LINE公式アカウント）** で一元管理する。
+アポっぽいトークの **スクショやテキストを秘書Botに送るだけ** で、
+Claude が内容を読み取り、確認のうえ **Googleカレンダーへ自動登録** する。
 
 - 言語: TypeScript
 - 実行基盤: Cloudflare Workers + [Hono](https://hono.dev/)
-- DB: Cloudflare D1（会話履歴のコンテキスト保持）
-- 外部API: LINE Messaging API（2アカウント） / Anthropic API / Google Calendar API
+- DB: Cloudflare D1（確認待ち予定の保持）
+- 外部API: LINE Messaging API / Anthropic API（Claude vision + Tool Use）/ Google Calendar API
+
+> ⚠️ 個人アカウントに直接ログインして自動操作するのは LINE 規約違反（垢BANリスク）。
+> 本ツールは個人アカウントには一切ログインせず、ユーザーが秘書Botへ
+> **スクショ/テキストを送る**という安全な方法で2アカウント分を扱う。
+
+---
+
+## 使い方（イメージ）
+
+1. 個人アカ①/②で届いたアポっぽいトークの **スクショを撮る**（テキストをコピペでもOK）
+2. それを **秘書Botに送る**
+3. Botが「この予定で登録しますか？」と **Flexで確認**
+4. **承認** を押すと Googleカレンダーに登録（`[LINE-A] 〇〇さん 打ち合わせ` のようにタグ付き）
+
+「来週火曜15時」のような相対表現も、現在日時(JST)を基準に解決する。
+登録前に必ず確認を挟むので、読み取りミスはその場で修正できる。
+
+---
+
+## 処理フロー
+
+```
+LINE(秘書Bot) ──webhook──▶ Worker
+  画像/テキスト受信
+    └ 画像なら content API で取得 → base64
+  Claude (vision + Tool Use)
+    ├ check_availability ──▶ Google Calendar freeBusy（A/B横断でダブルブッキング防止）
+    └ propose_appointment（確定候補）
+  D1 に確定候補を一時保存 → Flex確認を返信
+  「承認」postback ──▶ D1から取り出し → events.insert（[LINE-x] タグ付き）
+```
 
 ---
 
@@ -15,15 +46,16 @@ Anthropic API（Claude）の Tool Use でユーザーとスケジュールを調
 
 | Step | 内容 | 状態 |
 |------|------|------|
-| 1 | プロジェクト初期化・環境変数の整理 | ✅ 完了 |
-| 2 | Webhook受け口＋署名検証（アカウント分岐） | ✅ 完了 |
-| 3 | Google Calendar 認証・予定の取得/追加 | ⬜ 未着手 |
-| 4 | D1 による会話履歴の読み書き | ⬜ 未着手 |
-| 5 | Anthropic Tool Use ＋ Flex Message 生成 | ⬜ 未着手 |
-| 6 | 全体のルーティング・データフロー結合 | ⬜ 未着手 |
+| 1 | プロジェクト初期化・環境変数の整理 | ✅ |
+| 2 | Webhook受け口＋署名検証（アカウント分岐） | ✅ |
+| 3 | Google Calendar 認証・空き確認/予定登録 | ✅ |
+| 4 | D1（確認待ち予定の保持） | ✅ |
+| 5 | Claude Tool Use（vision対応）＋ Flex確認 | ✅ |
+| 6 | ルーティング・データフロー結合 | ✅ |
 
-現状（Step 2 まで）は、署名検証を通過したテキストメッセージに
-`[LINE-A] 受信しました: ...` の形でエコー返信する疎通確認レベル。
+未対応・今後の候補:
+- 複数メッセージにまたがる文脈保持（スクショ＋後追いテキストの紐付け）
+- 期限切れ pending の定期掃除（Cron Triggers）
 
 ---
 
@@ -31,26 +63,34 @@ Anthropic API（Claude）の Tool Use でユーザーとスケジュールを調
 
 ```bash
 npm install
+cp .dev.vars.example .dev.vars   # → 各値を設定
 
-# ローカル用シークレットを用意
-cp .dev.vars.example .dev.vars
-#   → .dev.vars を編集して各値を設定
-
-# D1 を作成し、出力された database_id を wrangler.jsonc に貼る
+# D1 作成 → 出力された database_id を wrangler.jsonc に貼る
 npx wrangler d1 create line-ai-scheduler
+# スキーマ適用（ローカル）
+npx wrangler d1 execute line-ai-scheduler --local --file=./schema.sql
 
-# 型チェック
 npm run typecheck
-
-# ローカル起動（http://localhost:8787）
 npm run dev
 ```
 
-### 本番デプロイ時のシークレット登録
+### 必要な外部設定
 
-`vars` ではなく Secret として登録する（コミットされない）:
+- **LINE**: 秘書Bot用に公式アカウント（Messaging APIチャネル）を作成。
+  Webhook URL は下表。個人アカ①→A、②→B のように受け皿を分けると
+  タグ付け（`[LINE-A]`/`[LINE-B]`）が自動になる。1つだけ使ってもOK。
+- **Anthropic**: APIキー（vision対応モデル。既定 `claude-opus-4-8`）。
+- **Google**: サービスアカウントを作り、対象カレンダーに「予定の変更権限」で共有。
+
+| 受け皿 | Webhook URL |
+|--------|-------------|
+| A（個人アカ①用） | `https://<your-worker>/webhook/a` |
+| B（個人アカ②用） | `https://<your-worker>/webhook/b` |
+
+### 本番デプロイ
 
 ```bash
+npx wrangler d1 execute line-ai-scheduler --remote --file=./schema.sql
 npx wrangler secret put LINE_A_CHANNEL_SECRET
 npx wrangler secret put LINE_A_CHANNEL_ACCESS_TOKEN
 npx wrangler secret put LINE_B_CHANNEL_SECRET
@@ -63,34 +103,26 @@ npx wrangler deploy
 
 ---
 
-## アカウント分岐の仕組み
-
-Webhook URL のパスでアカウントA/Bを識別する。
-
-| アカウント | Webhook URL（LINE Developers Console に設定） |
-|-----------|-----------------------------------------------|
-| A | `https://<your-worker>/webhook/a` |
-| B | `https://<your-worker>/webhook/b` |
-
-- パス（`a` / `b`）から `src/config/accounts.ts` が対応する
-  `CHANNEL_SECRET` / `CHANNEL_ACCESS_TOKEN` を解決する。
-- 署名検証はそのアカウントの `CHANNEL_SECRET` で `x-line-signature` を検証
-  （`src/line/signature.ts`、生ボディに対する HMAC-SHA256）。
-- 返信はそのアカウントの `CHANNEL_ACCESS_TOKEN` で行う。
-- 予定タイトルのプレフィックス（`[LINE-A]` / `[LINE-B]`）にもこの識別子を使う。
-
----
-
 ## ディレクトリ構成
 
 ```
 src/
-  index.ts            エントリポイント（Honoルーティング・分岐・署名検証）
+  index.ts            エントリポイント（分岐・署名検証・オーケストレーション）
   env.ts              環境バインディングの型
-  config/
-    accounts.ts       アカウントA/Bの解決
+  config/accounts.ts  アカウントA/Bの解決
   line/
-    signature.ts      x-line-signature の検証（Web Crypto）
+    signature.ts      x-line-signature 検証（Web Crypto）
     types.ts          Webhook イベントの型
-    client.ts         LINE Messaging API クライアント（reply）
+    content.ts        画像メッセージの取得（→ base64）
+    client.ts         reply（テキスト/Flex）
+    flex.ts           確認用 Flex Message の生成・日時整形
+  ai/
+    appointment.ts    予定候補の型
+    agent.ts          Claude Tool Use エージェント（vision + 空き確認）
+  calendar/google.ts  サービスアカウント認証・freeBusy・events.insert
+  store/pending.ts    確認待ち予定の D1 read/write
+schema.sql            D1 スキーマ
 ```
+
+モデルIDは `wrangler.jsonc` の `ANTHROPIC_MODEL` に集約。
+レイテンシ/コスト重視なら `claude-sonnet-4-6` へ1箇所変更で切替可能（vision対応）。

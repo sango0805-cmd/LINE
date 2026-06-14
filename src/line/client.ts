@@ -15,6 +15,14 @@ export class LineClient {
     await this.post("/message/reply", { replyToken, messages });
   }
 
+  /** 任意のメッセージオブジェクト（Flex 等）で返信する */
+  async replyMessages(
+    replyToken: string,
+    ...messages: Record<string, unknown>[]
+  ): Promise<void> {
+    await this.post("/message/reply", { replyToken, messages: messages.slice(0, 5) });
+  }
+
   private async post(path: string, body: unknown): Promise<void> {
     const res = await fetch(`${LINE_API_BASE}${path}`, {
       method: "POST",
