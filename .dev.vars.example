@@ -1,0 +1,30 @@
+# =============================================================================
+# ローカル開発用シークレット（`wrangler dev` が自動で読み込む）
+#   1. このファイルを `.dev.vars` にコピー
+#   2. 各値を実際のものに置き換える
+#   3. .dev.vars は .gitignore 済み（絶対にコミットしない）
+#
+# 本番(Cloudflare)へは `wrangler secret put <NAME>` で個別に登録する。
+#   例: wrangler secret put LINE_A_CHANNEL_SECRET
+# =============================================================================
+
+# ── LINE公式アカウント A ──────────────────────────────────────────────
+# LINE Developers Console > 対象チャネル > Basic settings の Channel secret
+LINE_A_CHANNEL_SECRET="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# Messaging API settings の Channel access token (long-lived)
+LINE_A_CHANNEL_ACCESS_TOKEN="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# ── LINE公式アカウント B ──────────────────────────────────────────────
+LINE_B_CHANNEL_SECRET="yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+LINE_B_CHANNEL_ACCESS_TOKEN="yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+
+# ── Anthropic (Claude) ───────────────────────────────────────────────
+# https://console.anthropic.com/ で発行
+ANTHROPIC_API_KEY="sk-ant-xxxxxxxxxxxxxxxxxxxxxxxx"
+
+# ── Google Calendar API（ステップ3で利用）────────────────────────────
+# サービスアカウントのJSON鍵を1行の文字列にして貼る。
+# 対象カレンダーにサービスアカウントのメールを「予定の変更権限」で共有しておく。
+GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account","project_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n","client_email":"...@...iam.gserviceaccount.com"}'
+# 予定を登録するカレンダーID（通常はGoogleアカウントのメールアドレスでもOK）
+GOOGLE_CALENDAR_ID="primary"

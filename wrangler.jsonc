@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "line-ai-scheduler",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+
+  // ── D1: 会話履歴のコンテキスト保持用（ステップ4で利用） ───────────────
+  // 作成: `wrangler d1 create line-ai-scheduler`
+  // 出てきた database_id を下に貼る。
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "line-ai-scheduler",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+    }
+  ],
+
+  // ── 非機密の環境変数 ────────────────────────────────────────────────
+  // 機密情報（CHANNEL_SECRET / ACCESS_TOKEN / APIキー）は vars に書かず、
+  // `wrangler secret put` で登録する（下記 .dev.vars.example 参照）。
+  "vars": {
+    "APP_TIMEZONE": "Asia/Tokyo",
+    "ANTHROPIC_MODEL": "claude-opus-4-8"
+  }
+}
